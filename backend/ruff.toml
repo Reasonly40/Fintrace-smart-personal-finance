@@ -1,0 +1,14 @@
+line-length = 88
+target-version = "py312"
+
+# File migration hasil generate Alembic tidak ikut di-lint
+extend-exclude = ["migrations/versions"]
+
+[lint]
+select = [
+    "E",   # pycodestyle (gaya dasar)
+    "F",   # pyflakes (import tak terpakai, variabel salah)
+    "I",   # urutan import
+    "UP",  # sintaks Python modern
+    "B",   # potensi bug umum
+]
