@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 
-app = FastAPI(
-    title="Smart Personal Finance API",
-    version="1.0.0"
-)
+from app.core.config import settings
+
+app = FastAPI(title="Fintrace API", version="0.1.0")
+
 
 @app.get("/health")
-def health_check():
-    return {"status": "healthy"}
+def health() -> dict[str, str]:
+    """Liveness check: aplikasi hidup. Pengecekan database ditambah di 0.4."""
+    return {"status": "ok", "env": settings.app_env}
