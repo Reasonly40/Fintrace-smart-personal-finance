@@ -30,3 +30,11 @@ class UserResponse(BaseModel):
     email: EmailStr
     full_name: str
     created_at: datetime
+
+class SessionResponse(BaseModel):
+    """Info sesi untuk pemiliknya. token_hash sengaja tidak ada."""
+
+    id: uuid.UUID
+    created_at: datetime
+    expires_at: datetime
+    is_current: bool

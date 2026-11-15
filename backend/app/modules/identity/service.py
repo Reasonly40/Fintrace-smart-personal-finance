@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -7,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.errors import ConflictError, UnauthorizedError
+from app.core.errors import ConflictError, NotFoundError, UnauthorizedError
 from app.modules.identity.models import User, UserSession
 from app.modules.identity.security import (
     hash_password,
@@ -30,6 +31,10 @@ class NotAuthenticatedError(UnauthorizedError):
     code = "not_authenticated"
     message = "Anda belum masuk atau sesi sudah berakhir."
 
+
+class SessionNotFoundError(NotFoundError):
+    code = "session_not_found"
+    message = "Sesi tidak ditemukan."
 
 # Hash palsu: dipakai agar waktu respons login tetap mirip
 # ketika email tidak ditemukan (mengurangi celah timing).
@@ -130,3 +135,48 @@ def get_user_by_session_token(db: Session, token: str) -> User | None:
             User.is_active.is_(True),
         )
     ).scalar_one_or_none()
+
+def list_active_sessions(
+    db: Session, user: User, current_token: str | None
+) -> list[dict[str, object]]:
+    """Sesi aktif milik user yang sedang login, tidak pernah milik orang lain."""
+    current_hash = hash_token(current_token) if current_token else None
+    rows = (
+        db.execute(
+            select(UserSession)
+            .where(
+                UserSession.user_id == user.id,
+                UserSession.revoked_at.is_(None),
+                UserSession.expires_at > datetime.now(UTC),
+            )
+            .order_by(UserSession.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "id": s.id,
+            "created_at": s.created_at,
+            "expires_at": s.expires_at,
+            "is_current": s.token_hash == current_hash,
+        }
+        for s in rows
+    ]
+
+
+def revoke_user_session(db: Session, user: User, session_id: uuid.UUID) -> None:
+    """Cabut sesi milik user. Sesi milik orang lain diperlakukan
+    persis seperti sesi yang tidak ada."""
+    result = db.execute(
+        update(UserSession)
+        .where(
+            UserSession.id == session_id,
+            UserSession.user_id == user.id,  # kunci isolasi antar-user
+            UserSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(UTC))
+    )
+    db.commit()
+    if result.rowcount == 0:
+        raise SessionNotFoundError()

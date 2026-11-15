@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Request, Response, status
 
 from app.core.config import settings
@@ -9,6 +11,7 @@ from app.modules.identity.models import User
 from app.modules.identity.schemas import (
     LoginRequest,
     RegisterRequest,
+    SessionResponse,
     UserResponse,
 )
 
@@ -102,3 +105,20 @@ def logout(request: Request, db: DbSession) -> Response:
 @router.get("/me", response_model=UserResponse)
 def me(user: CurrentUser) -> User:
     return user
+
+@router.get("/sessions", response_model=list[SessionResponse])
+def list_sessions(
+    request: Request, db: DbSession, user: CurrentUser
+) -> list[dict[str, object]]:
+    token = request.cookies.get(settings.session_cookie_name)
+    return service.list_active_sessions(db, user, token)
+
+
+@router.delete(
+    "/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_session(
+    session_id: uuid.UUID, db: DbSession, user: CurrentUser
+) -> Response:
+    service.revoke_user_session(db, user, session_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

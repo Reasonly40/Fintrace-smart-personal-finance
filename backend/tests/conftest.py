@@ -65,3 +65,11 @@ def client(db_session):
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def second_client(client):
+    """Klien kedua (pengguna lain) dengan cookie jar terpisah,
+    memakai sesi database yang sama dengan `client`."""
+    with TestClient(app) as c:
+        yield c

@@ -31,6 +31,11 @@ class ForbiddenError(AppError):
     code = "forbidden"
     message = "Anda tidak memiliki akses."
 
+class NotFoundError(AppError):
+    status_code = 404
+    code = "not_found"
+    message = "Data tidak ditemukan."
+
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
