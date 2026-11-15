@@ -1,11 +1,25 @@
+from pathlib import Path
+
 import pytest
+from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from alembic import command
 from app.core.config import settings
 from app.db.session import get_db
 from app.main import app
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
+def run_migrations(url: str) -> None:
+    """Terapkan semua migration ke database tes."""
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
+    cfg.attributes["url"] = url
+    command.upgrade(cfg, "head")
 
 
 @pytest.fixture(scope="session")
@@ -19,6 +33,7 @@ def test_engine():
             "mengandung 'test'",
             returncode=2,
         )
+    run_migrations(url)
     engine = create_engine(url, pool_pre_ping=True)
     yield engine
     engine.dispose()
