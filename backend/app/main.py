@@ -1,16 +1,15 @@
-from typing import Annotated
-
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.session import get_db
+from app.core.deps import DbSession
+from app.core.errors import register_error_handlers
+from app.modules.identity.router import router as auth_router
 
 app = FastAPI(title="Fintrace API", version="0.1.0")
-
-DbSession = Annotated[Session, Depends(get_db)]
+register_error_handlers(app)
+app.include_router(auth_router, prefix="/api/v1")
 
 
 @app.get("/health")
