@@ -26,6 +26,11 @@ class UnauthorizedError(AppError):
     code = "unauthorized"
     message = "Autentikasi diperlukan."
 
+class ForbiddenError(AppError):
+    status_code = 403
+    code = "forbidden"
+    message = "Anda tidak memiliki akses."
+
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:

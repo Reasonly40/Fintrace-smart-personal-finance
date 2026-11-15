@@ -12,6 +12,7 @@ LOGOUT = "/api/v1/auth/logout"
 ME = "/api/v1/auth/me"
 CREDENTIALS = {"email": "budi@example.com", "password": "kata-sandi-panjang-1"}
 COOKIE = settings.session_cookie_name
+CSRF_COOKIE = settings.csrf_cookie_name
 
 
 @pytest.fixture
@@ -94,8 +95,9 @@ def test_token_is_stored_hashed(client, registered, db_session):
 def test_logout_revokes_session(client, registered, db_session):
     client.post(LOGIN, json=CREDENTIALS)
     token = client.cookies.get(COOKIE)
+    csrf = client.cookies.get(CSRF_COOKIE)
 
-    response = client.post(LOGOUT)
+    response = client.post(LOGOUT, headers={"X-CSRF-Token": csrf})
     assert response.status_code == 204
 
     # Token lama dibawa lagi secara manual: harus ditolak server

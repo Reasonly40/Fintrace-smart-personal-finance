@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, Response, status
 
 from app.core.config import settings
+from app.core.csrf import make_csrf_token
 from app.core.deps import DbSession
 from app.modules.identity import service
 from app.modules.identity.dependencies import CurrentUser
@@ -14,23 +15,41 @@ from app.modules.identity.schemas import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def set_session_cookie(response: Response, token: str) -> None:
+def set_auth_cookies(response: Response, session_token: str) -> None:
+    max_age = settings.session_ttl_days * 24 * 3600
+    # Cookie sesi: tidak terbaca JavaScript
     response.set_cookie(
         key=settings.session_cookie_name,
-        value=token,
-        max_age=settings.session_ttl_days * 24 * 3600,
+        value=session_token,
+        max_age=max_age,
         httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    # Cookie CSRF: sengaja terbaca JavaScript agar bisa dikirim sebagai header
+    response.set_cookie(
+        key=settings.csrf_cookie_name,
+        value=make_csrf_token(session_token),
+        max_age=max_age,
+        httponly=False,
         secure=settings.cookie_secure,
         samesite="lax",
         path="/",
     )
 
 
-def clear_session_cookie(response: Response) -> None:
+def clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(
         key=settings.session_cookie_name,
         path="/",
         httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+    )
+    response.delete_cookie(
+        key=settings.csrf_cookie_name,
+        path="/",
         secure=settings.cookie_secure,
         samesite="lax",
     )
@@ -66,7 +85,7 @@ def login(
         service.revoke_session(db, old_token)
 
     token = service.create_session(db, user)
-    set_session_cookie(response, token)
+    set_auth_cookies(response, token)
     return user
 
 
@@ -76,7 +95,7 @@ def logout(request: Request, db: DbSession) -> Response:
     if token:
         service.revoke_session(db, token)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
-    clear_session_cookie(response)
+    clear_auth_cookies(response)
     return response
 
 

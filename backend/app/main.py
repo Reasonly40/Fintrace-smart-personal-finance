@@ -1,13 +1,20 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
+from app.core.csrf import csrf_protect
 from app.core.deps import DbSession
 from app.core.errors import register_error_handlers
 from app.modules.identity.router import router as auth_router
 
-app = FastAPI(title="Fintrace API", version="0.1.0")
+# Dependency global: semua route, termasuk modul yang dibuat nanti,
+# otomatis dilindungi CSRF tanpa perlu diingat satu per satu.
+app = FastAPI(
+    title="Fintrace API",
+    version="0.1.0",
+    dependencies=[Depends(csrf_protect)],
+)
 register_error_handlers(app)
 app.include_router(auth_router, prefix="/api/v1")
 
