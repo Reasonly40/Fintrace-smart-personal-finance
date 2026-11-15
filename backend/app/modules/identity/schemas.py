@@ -17,6 +17,9 @@ class RegisterRequest(BaseModel):
             raise ValueError("Nama tidak boleh kosong.")
         return value
 
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
 
 class UserResponse(BaseModel):
     """Yang boleh keluar ke klien. password_hash sengaja tidak ada."""

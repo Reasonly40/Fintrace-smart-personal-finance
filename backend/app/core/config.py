@@ -10,5 +10,12 @@ class Settings(BaseSettings):
     # .env berada di root proyek, satu level di atas folder backend/
     model_config = SettingsConfigDict(env_file="../.env", extra="ignore")
 
+    session_cookie_name: str = "fintrace_session"
+    session_ttl_days: int = 7
+
+    @property
+    def cookie_secure(self) -> bool:
+        """Cookie hanya dikirim lewat HTTPS di luar mode development."""
+        return self.app_env != "development"
 
 settings = Settings()

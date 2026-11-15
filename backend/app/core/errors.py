@@ -21,6 +21,10 @@ class ConflictError(AppError):
     code = "conflict"
     message = "Data bertentangan dengan data yang sudah ada."
 
+class UnauthorizedError(AppError):
+    status_code = 401
+    code = "unauthorized"
+    message = "Autentikasi diperlukan."
 
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
