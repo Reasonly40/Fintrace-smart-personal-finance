@@ -1,11 +1,12 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     String,
     UniqueConstraint,
     func,
@@ -55,4 +56,28 @@ class UserSession(UUIDPrimaryKeyMixin, Base):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+class LoginAttempt(UUIDPrimaryKeyMixin, Base):
+    """Catatan login gagal untuk rate limit. Email disimpan sebagai HMAC."""
+
+    __tablename__ = "login_attempts"
+
+    email_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_login_attempts_email_ip_time",
+            "email_hash",
+            "ip_address",
+            "attempted_at",
+        ),
+        Index("ix_login_attempts_ip_time", "ip_address", "attempted_at"),
     )

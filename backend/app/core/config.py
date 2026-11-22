@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     csrf_cookie_name: str = "fintrace_csrf"
     session_ttl_days: int = 7
 
+    login_window_minutes: int = 15
+    login_max_failures_per_account_ip: int = 5
+    login_max_failures_per_ip: int = 20
+
     secret_key: str = ""
     # Daftar origin yang boleh mengirim request pengubah data, dipisah koma
     allowed_origins: str = (
