@@ -7,6 +7,7 @@ from app.core.csrf import csrf_protect
 from app.core.deps import DbSession
 from app.core.errors import register_error_handlers
 from app.modules.identity.router import router as auth_router
+from app.modules.wallet.router import router as wallet_router
 
 # Dependency global: semua route, termasuk modul yang dibuat nanti,
 # otomatis dilindungi CSRF tanpa perlu diingat satu per satu.
@@ -17,6 +18,7 @@ app = FastAPI(
 )
 register_error_handlers(app)
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(wallet_router, prefix="/api/v1")
 
 
 @app.get("/health")

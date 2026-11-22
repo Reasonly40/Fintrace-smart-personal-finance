@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -84,3 +84,16 @@ def create_wallet_asset_account(
     db.add(account)
     db.flush()
     return account
+
+def rename_wallet_account(
+    db: Session, *, user_id: uuid.UUID, wallet_id: uuid.UUID, name: str
+) -> None:
+    """Samakan nama akun ledger dengan nama wallet. Tanpa commit."""
+    db.execute(
+        update(LedgerAccount)
+        .where(
+            LedgerAccount.wallet_id == wallet_id,
+            LedgerAccount.user_id == user_id,
+        )
+        .values(account_name=name)
+    )
