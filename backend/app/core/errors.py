@@ -9,6 +9,7 @@ class AppError(Exception):
     status_code = 400
     code = "app_error"
     message = "Terjadi kesalahan."
+    headers: dict[str, str] | None = None
 
     def __init__(self, message: str | None = None) -> None:
         if message:
@@ -36,12 +37,22 @@ class NotFoundError(AppError):
     code = "not_found"
     message = "Data tidak ditemukan."
 
+class TooManyRequestsError(AppError):
+    status_code = 429
+    code = "too_many_requests"
+    message = "Terlalu banyak permintaan. Coba lagi nanti."
+
+    def __init__(self, retry_after: int, message: str | None = None) -> None:
+        super().__init__(message)
+        self.headers = {"Retry-After": str(retry_after)}
+
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": {"code": exc.code, "message": exc.message}},
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)
