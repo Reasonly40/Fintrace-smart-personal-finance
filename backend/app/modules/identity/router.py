@@ -72,6 +72,10 @@ def register(payload: RegisterRequest, db: DbSession) -> User:
     )
 
 
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
 @router.post("/login", response_model=UserResponse)
 def login(
     payload: LoginRequest,
@@ -79,8 +83,11 @@ def login(
     response: Response,
     db: DbSession,
 ) -> User:
-    user = service.authenticate(
-        db, email=payload.email, password=payload.password
+    user = service.login(
+        db,
+        email=payload.email,
+        password=payload.password,
+        ip=client_ip(request),
     )
     # Rotasi: cabut sesi lama bila klien masih membawa cookie
     old_token = request.cookies.get(settings.session_cookie_name)

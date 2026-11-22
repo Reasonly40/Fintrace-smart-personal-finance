@@ -9,12 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, UnauthorizedError
+from app.modules.identity import rate_limit
 from app.modules.identity.models import User, UserSession
-from app.modules.identity.security import (
-    hash_password,
-    needs_rehash,
-    verify_password,
-)
+from app.modules.identity.security import hash_password, needs_rehash, verify_password
 
 
 class EmailAlreadyRegisteredError(ConflictError):
@@ -180,3 +177,14 @@ def revoke_user_session(db: Session, user: User, session_id: uuid.UUID) -> None:
     db.commit()
     if result.rowcount == 0:
         raise SessionNotFoundError()
+    
+def login(db: Session, *, email: str, password: str, ip: str) -> User:
+    """Login dengan rate limit: cek batas, verifikasi, catat atau reset."""
+    rate_limit.ensure_login_allowed(db, email=email, ip=ip)
+    try:
+        user = authenticate(db, email=email, password=password)
+    except InvalidCredentialsError:
+        rate_limit.record_failed_login(db, email=email, ip=ip)
+        raise
+    rate_limit.clear_failed_logins(db, email=email, ip=ip)
+    return user
