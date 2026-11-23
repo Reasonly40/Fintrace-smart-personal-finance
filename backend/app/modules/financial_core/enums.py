@@ -11,3 +11,21 @@ class AccountType(StrEnum):
 class NormalSide(StrEnum):
     DEBIT = "DEBIT"
     CREDIT = "CREDIT"
+
+class TransactionType(StrEnum):
+    INCOME = "INCOME"
+    EXPENSE = "EXPENSE"
+    TRANSFER = "TRANSFER"
+    OPENING_BALANCE = "OPENING_BALANCE"
+    REVERSAL = "REVERSAL"
+
+
+class TransactionStatus(StrEnum):
+    DRAFT = "DRAFT"
+    POSTED = "POSTED"
+    REVERSED = "REVERSED"
+
+
+class EntryType(StrEnum):
+    DEBIT = "DEBIT"
+    CREDIT = "CREDIT"
