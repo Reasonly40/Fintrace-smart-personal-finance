@@ -81,3 +81,25 @@ def build_journal(
     ]
     assert_balanced(lines, amount)
     return lines
+
+def build_reversal_journal(
+    original_lines: list[JournalLine], amount: int
+) -> list[JournalLine]:
+    """Kebalikan seluruh baris jurnal asli (bagian 7.3): akun dan nominal
+    sama, sisi debit dan kredit ditukar."""
+    if not original_lines:
+        raise JournalError("Transaksi asli tidak punya jurnal.")
+    flipped = [
+        JournalLine(
+            account_id=line.account_id,
+            entry_type=(
+                EntryType.CREDIT
+                if line.entry_type == EntryType.DEBIT
+                else EntryType.DEBIT
+            ),
+            amount=line.amount,
+        )
+        for line in original_lines
+    ]
+    assert_balanced(flipped, amount)
+    return flipped

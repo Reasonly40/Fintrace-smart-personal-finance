@@ -6,11 +6,12 @@ from typing import Literal
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.modules.financial_core.balance import wallet_balance
 from app.modules.financial_core.enums import (
     AccountType,
+    EntryType,
     NormalSide,
     TransactionStatus,
     TransactionType,
@@ -21,13 +22,21 @@ from app.modules.financial_core.errors import (
     InvalidDateRangeError,
     InvalidTransactionShapeError,
     OpeningBalanceNotAllowedError,
+    ReversalNotAllowedError,
     SameWalletTransferError,
+    TransactionAlreadyReversedError,
     TransactionNotDraftError,
     TransactionNotFoundError,
+    TransactionNotPostedError,
     UnsupportedTransactionTypeError,
     WalletNotActiveError,
 )
-from app.modules.financial_core.journal import JournalAccounts, build_journal
+from app.modules.financial_core.journal import (
+    JournalAccounts,
+    JournalLine,
+    build_journal,
+    build_reversal_journal,
+)
 from app.modules.financial_core.models import (
     LedgerAccount,
     LedgerEntry,
@@ -218,15 +227,31 @@ def create_draft(
     db.flush()
     return transaction
 
-def _wallet_has_entries(
+def _wallet_has_activity(
     db: Session, *, user_id: uuid.UUID, wallet_id: uuid.UUID
 ) -> bool:
+    """True bila wallet punya jurnal apa pun, kecuali saldo awal yang sudah
+    dibalik beserta reversalnya: saldo awal yang salah boleh diganti."""
+    original = aliased(Transaction)
+    opening = TransactionType.OPENING_BALANCE.value
+    reversal = TransactionType.REVERSAL.value
+    reversed_status = TransactionStatus.REVERSED.value
     row = db.execute(
         select(LedgerEntry.id)
         .join(LedgerAccount, LedgerAccount.id == LedgerEntry.account_id)
+        .join(Transaction, Transaction.id == LedgerEntry.transaction_id)
+        .outerjoin(original, original.id == Transaction.reversal_of_id)
         .where(
             LedgerAccount.wallet_id == wallet_id,
             LedgerAccount.user_id == user_id,
+            ~(
+                (Transaction.transaction_type == opening)
+                & (Transaction.status == reversed_status)
+            ),
+            ~(
+                (Transaction.transaction_type == reversal)
+                & (original.transaction_type == opening)
+            ),
         )
         .limit(1)
     ).first()
@@ -333,7 +358,7 @@ def post_transaction(
         )
         if balance < amount:
             raise InsufficientBalanceError()
-    if kind == TransactionType.OPENING_BALANCE and _wallet_has_entries(
+    if kind == TransactionType.OPENING_BALANCE and _wallet_has_activity(
         db, user_id=user_id, wallet_id=primary_wallet_id
     ):
         raise OpeningBalanceNotAllowedError()
@@ -600,3 +625,202 @@ def create_draft_with_idempotency(
         db.rollback()
         raise
     return CreateResult(transaction_id=transaction.id, replayed=False)
+
+# ---------- reversal ----------
+
+
+@dataclass(frozen=True)
+class ReverseResult:
+    original_id: uuid.UUID
+    reversal_id: uuid.UUID
+    replayed: bool
+
+
+def _ensure_no_overdraft(
+    db: Session, *, user_id: uuid.UUID, lines: list[JournalLine]
+) -> None:
+    """Reversal tidak boleh membuat saldo wallet negatif (FIN-001).
+
+    Setiap baris KREDIT pada akun ASSET mengurangi saldo wallet-nya."""
+    accounts = {
+        account.id: account
+        for account in db.execute(
+            select(LedgerAccount).where(
+                LedgerAccount.id.in_([line.account_id for line in lines]),
+                LedgerAccount.user_id == user_id,
+            )
+        ).scalars()
+    }
+    for line in lines:
+        account = accounts[line.account_id]
+        if (
+            account.account_type == AccountType.ASSET
+            and line.entry_type == EntryType.CREDIT
+        ):
+            balance = wallet_balance(
+                db, user_id=user_id, wallet_id=account.wallet_id
+            )
+            if balance < line.amount:
+                raise InsufficientBalanceError(
+                    "Reversal ditolak: saldo wallet tidak cukup untuk "
+                    "membalik transaksi ini."
+                )
+
+
+def get_reversal_id(
+    db: Session, *, user_id: uuid.UUID, transaction_id: uuid.UUID
+) -> uuid.UUID | None:
+    return db.execute(
+        select(Transaction.id).where(
+            Transaction.reversal_of_id == transaction_id,
+            Transaction.user_id == user_id,
+        )
+    ).scalar_one_or_none()
+
+
+def reverse_transaction(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    transaction_id: uuid.UUID,
+    reason: str,
+) -> Transaction:
+    """Balik transaksi POSTED. Tanpa commit (batas transaksi ada di
+    pemanggil): reversal, jurnal kebalikan, dan status REVERSED commit
+    atau batal bersama (bagian 9.3 dan FIN-009)."""
+    original = db.execute(
+        select(Transaction)
+        .where(
+            Transaction.id == transaction_id, Transaction.user_id == user_id
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if original is None:
+        raise TransactionNotFoundError()
+    if original.status == TransactionStatus.DRAFT:
+        raise TransactionNotPostedError()
+    if original.status == TransactionStatus.REVERSED:
+        raise TransactionAlreadyReversedError()
+    if original.transaction_type == TransactionType.REVERSAL:
+        raise ReversalNotAllowedError()
+
+    wallet_ids = [
+        wallet_id
+        for wallet_id in (
+            original.wallet_id,
+            original.from_wallet_id,
+            original.to_wallet_id,
+        )
+        if wallet_id is not None
+    ]
+    wallets = _lock_wallets(db, user_id=user_id, wallet_ids=wallet_ids)
+    if any(not wallet.is_active for wallet in wallets.values()):
+        raise WalletNotActiveError()
+
+    rows = (
+        db.execute(
+            select(LedgerEntry)
+            .where(
+                LedgerEntry.transaction_id == original.id,
+                LedgerEntry.user_id == user_id,
+            )
+            .order_by(LedgerEntry.entry_type.desc(), LedgerEntry.id)
+        )
+        .scalars()
+        .all()
+    )
+    amount = int(original.amount)
+    lines = build_reversal_journal(
+        [
+            JournalLine(
+                account_id=row.account_id,
+                entry_type=EntryType(row.entry_type),
+                amount=int(row.amount),
+            )
+            for row in rows
+        ],
+        amount,
+    )
+    _ensure_no_overdraft(db, user_id=user_id, lines=lines)
+
+    now = datetime.now(UTC)
+    reversal = Transaction(
+        user_id=user_id,
+        transaction_type=TransactionType.REVERSAL.value,
+        amount=original.amount,
+        currency=original.currency,
+        description=reason,
+        status=TransactionStatus.POSTED.value,
+        occurred_at=now,
+        posted_at=now,
+        reversal_of_id=original.id,
+    )
+    db.add(reversal)
+    db.flush()
+    for line in lines:
+        db.add(
+            LedgerEntry(
+                user_id=user_id,
+                transaction_id=reversal.id,
+                account_id=line.account_id,
+                entry_type=line.entry_type.value,
+                amount=Decimal(line.amount),
+            )
+        )
+    db.flush()
+    # Satu-satunya perubahan sah pada transaksi POSTED (trigger FIN-008)
+    original.status = TransactionStatus.REVERSED.value
+    db.flush()
+    return reversal
+
+
+def reverse_with_idempotency(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    transaction_id: uuid.UUID,
+    reason: str,
+    idempotency_key: str,
+) -> ReverseResult:
+    """Reversal yang aman diulang. Commit dilakukan di sini, sekali, untuk
+    reversal dan record idempotency sekaligus."""
+    fingerprint = idempotency.request_fingerprint(
+        "transactions.reverse",
+        {"transaction_id": str(transaction_id), "reason": reason},
+    )
+    try:
+        outcome = idempotency.begin(
+            db,
+            user_id=user_id,
+            key=idempotency_key,
+            request_hash=fingerprint,
+        )
+        if outcome.replayed:
+            stored = outcome.response or {}
+            return ReverseResult(
+                original_id=uuid.UUID(stored["original_id"]),
+                reversal_id=uuid.UUID(stored["reversal_id"]),
+                replayed=True,
+            )
+        reversal = reverse_transaction(
+            db,
+            user_id=user_id,
+            transaction_id=transaction_id,
+            reason=reason,
+        )
+        idempotency.complete(
+            db,
+            outcome.record,
+            {
+                "original_id": str(transaction_id),
+                "reversal_id": str(reversal.id),
+            },
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return ReverseResult(
+        original_id=transaction_id, reversal_id=reversal.id, replayed=False
+    )

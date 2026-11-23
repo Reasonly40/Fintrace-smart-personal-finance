@@ -63,3 +63,18 @@ class InvalidTransactionShapeError(AppError):
         "Kombinasi wallet_id, from_wallet_id, dan to_wallet_id tidak sesuai "
         "dengan tipe transaksi."
     )
+
+
+class TransactionNotPostedError(ConflictError):
+    code = "transaction_not_posted"
+    message = "Hanya transaksi POSTED yang bisa direversal."
+
+
+class TransactionAlreadyReversedError(ConflictError):
+    code = "transaction_already_reversed"
+    message = "Transaksi ini sudah pernah direversal."
+
+
+class ReversalNotAllowedError(ConflictError):
+    code = "reversal_not_allowed"
+    message = "Transaksi reversal tidak bisa direversal lagi."

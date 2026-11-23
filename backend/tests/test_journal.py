@@ -13,6 +13,7 @@ from app.modules.financial_core.journal import (
     JournalLine,
     assert_balanced,
     build_journal,
+    build_reversal_journal,
 )
 
 ACCOUNTS = JournalAccounts(
@@ -114,3 +115,37 @@ def test_unbalanced_lines_are_detected():
 
     with pytest.raises(JournalError):
         assert_balanced(lines, 100)
+
+def test_reversal_journal_flips_every_line():
+    original = build_journal("INCOME", 100_000, ACCOUNTS)
+
+    reversal = build_reversal_journal(original, 100_000)
+
+    flipped = {(line.account_id, line.entry_type) for line in reversal}
+    assert flipped == {
+        (ACCOUNTS.wallet_account_id, EntryType.CREDIT),
+        (ACCOUNTS.income_control_id, EntryType.DEBIT),
+    }
+    assert {line.amount for line in reversal} == {100_000}
+
+
+@pytest.mark.parametrize(
+    "kind", ["INCOME", "EXPENSE", "OPENING_BALANCE", "TRANSFER"]
+)
+def test_reversal_journal_is_balanced_for_every_type(kind):
+    original = build_journal(kind, 250_000, ACCOUNTS)
+
+    reversal = build_reversal_journal(original, 250_000)
+
+    debit = sum(
+        line.amount for line in reversal if line.entry_type == EntryType.DEBIT
+        )
+    
+    credit = sum(
+        line.amount for line in reversal if line.entry_type == EntryType.CREDIT
+    )
+    assert debit == credit == 250_000
+
+def test_reversal_journal_requires_the_original_lines():
+    with pytest.raises(JournalError):
+        build_reversal_journal([], 100_000)
