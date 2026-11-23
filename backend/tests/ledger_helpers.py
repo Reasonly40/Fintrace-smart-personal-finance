@@ -147,3 +147,18 @@ def expect_invalid_at_commit(db) -> None:
     with pytest.raises(IntegrityError):
         db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
     db.rollback()
+
+def post_expense(db, user, wallet, amount=30_000) -> Transaction:
+    """Expense POSTED dengan jurnal seimbang: debit Expense, kredit wallet."""
+    tx = make_transaction(
+        db,
+        user.id,
+        transaction_type="EXPENSE",
+        wallet_id=wallet.id,
+        amount=Decimal(amount),
+        status="POSTED",
+    )
+    expense = control_account(db, user.id, "EXPENSE_CONTROL")
+    add_entry(db, tx, expense.id, "DEBIT")
+    add_entry(db, tx, asset_account(db, wallet).id, "CREDIT")
+    return tx
