@@ -15,6 +15,8 @@ from app.modules.financial_core.enums import (
 from app.modules.financial_core.models import Transaction
 from app.modules.financial_core.schemas import (
     EntryResponse,
+    ReversalRequest,
+    ReversalResponse,
     TransactionCreate,
     TransactionDetailResponse,
     TransactionResponse,
@@ -52,6 +54,9 @@ def detail_response(
             )
             for entry, account in rows
         ],
+        reversed_by_id=service.get_reversal_id(
+            db, user_id=transaction.user_id, transaction_id=transaction.id
+        ),
     )
 
 
@@ -157,3 +162,32 @@ def post_transaction(
         db, user_id=user.id, transaction_id=result.transaction_id
     )
     return detail_response(db, transaction)
+
+@router.post("/{transaction_id}/reverse", response_model=ReversalResponse)
+def reverse_transaction(
+    transaction_id: uuid.UUID,
+    payload: ReversalRequest,
+    response: Response,
+    db: DbSession,
+    user: CurrentUser,
+    idempotency_key: IdempotencyKey,
+) -> ReversalResponse:
+    result = service.reverse_with_idempotency(
+        db,
+        user_id=user.id,
+        transaction_id=transaction_id,
+        reason=payload.reason,
+        idempotency_key=idempotency_key,
+    )
+    if result.replayed:
+        response.headers["Idempotent-Replay"] = "true"
+    original = service.get_transaction(
+        db, user_id=user.id, transaction_id=result.original_id
+    )
+    reversal = service.get_transaction(
+        db, user_id=user.id, transaction_id=result.reversal_id
+    )
+    return ReversalResponse(
+        original=detail_response(db, original),
+        reversal=detail_response(db, reversal),
+    )

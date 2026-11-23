@@ -96,3 +96,17 @@ def new_transfer(
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+def reverse_tx(c, transaction_id, key=None, reason="Salah input"):
+    headers = {**csrf_headers(c), "Idempotency-Key": key or new_key()}
+    return c.post(
+        f"{TRANSACTIONS}/{transaction_id}/reverse",
+        json={"reason": reason},
+        headers=headers,
+    )
+
+
+def reverse_ok(c, transaction_id, key=None, reason="Salah input") -> dict:
+    response = reverse_tx(c, transaction_id, key, reason)
+    assert response.status_code == 200, response.text
+    return response.json()

@@ -98,3 +98,23 @@ class EntryResponse(BaseModel):
 
 class TransactionDetailResponse(TransactionResponse):
     entries: list[EntryResponse]
+    reversed_by_id: uuid.UUID | None = None
+
+
+class ReversalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def clean_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Alasan tidak boleh kosong.")
+        return value
+
+
+class ReversalResponse(BaseModel):
+    original: TransactionDetailResponse
+    reversal: TransactionDetailResponse
