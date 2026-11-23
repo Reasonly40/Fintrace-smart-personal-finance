@@ -19,7 +19,9 @@ from app.modules.financial_core.errors import (
     InsufficientBalanceError,
     InvalidAmountError,
     InvalidDateRangeError,
+    InvalidTransactionShapeError,
     OpeningBalanceNotAllowedError,
+    SameWalletTransferError,
     TransactionNotDraftError,
     TransactionNotFoundError,
     UnsupportedTransactionTypeError,
@@ -37,11 +39,12 @@ from app.modules.wallet.models import Wallet
 
 CURRENCY = "IDR"
 
-# Tipe yang bisa dibuat dan diposting sekarang; TRANSFER (2.6), REVERSAL (2.7)
+# Tipe yang bisa dibuat dan diposting sekarang; REVERSAL menyusul di 2.7
 POSTABLE_TYPES = {
     TransactionType.INCOME,
     TransactionType.EXPENSE,
     TransactionType.OPENING_BALANCE,
+    TransactionType.TRANSFER,
 }
 
 # kode akun -> (nama, tipe, sisi normal); sesuai bagian 7.2 dokumen
@@ -153,8 +156,10 @@ def create_draft(
     user_id: uuid.UUID,
     transaction_type: TransactionType,
     amount: int,
-    wallet_id: uuid.UUID,
     occurred_at: datetime,
+    wallet_id: uuid.UUID | None = None,
+    from_wallet_id: uuid.UUID | None = None,
+    to_wallet_id: uuid.UUID | None = None,
     description: str | None = None,
 ) -> Transaction:
     """Buat transaksi DRAFT. DRAFT tidak punya entries dan tidak memengaruhi
@@ -164,27 +169,54 @@ def create_draft(
     if amount <= 0:
         raise InvalidAmountError()
 
-    wallet = db.execute(
-        select(Wallet).where(Wallet.id == wallet_id, Wallet.user_id == user_id)
-    ).scalar_one_or_none()
-    if wallet is None:
+    if transaction_type == TransactionType.TRANSFER:
+        if (
+            wallet_id is not None
+            or from_wallet_id is None
+            or to_wallet_id is None
+        ):
+            raise InvalidTransactionShapeError()
+        if from_wallet_id == to_wallet_id:
+            raise SameWalletTransferError()
+        wanted = [from_wallet_id, to_wallet_id]
+    else:
+        if (
+            wallet_id is None
+            or from_wallet_id is not None
+            or to_wallet_id is not None
+        ):
+            raise InvalidTransactionShapeError()
+        wanted = [wallet_id]
+
+    wallets = (
+        db.execute(
+            select(Wallet).where(
+                Wallet.id.in_(wanted), Wallet.user_id == user_id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Wallet asing dan wallet yang tidak ada tidak dibedakan
+    if len(wallets) != len(wanted):
         raise WalletNotFoundError()
-    if not wallet.is_active:
+    if any(not wallet.is_active for wallet in wallets):
         raise WalletNotActiveError()
 
     transaction = Transaction(
         user_id=user_id,
         transaction_type=transaction_type.value,
         amount=Decimal(amount),
-        currency=wallet.currency,
-        wallet_id=wallet.id,
+        currency=CURRENCY,
+        wallet_id=wallet_id,
+        from_wallet_id=from_wallet_id,
+        to_wallet_id=to_wallet_id,
         description=description,
         occurred_at=occurred_at,
     )
     db.add(transaction)
     db.flush()
     return transaction
-
 
 def _wallet_has_entries(
     db: Session, *, user_id: uuid.UUID, wallet_id: uuid.UUID
@@ -200,22 +232,58 @@ def _wallet_has_entries(
     ).first()
     return row is not None
 
+def _lock_wallets(
+    db: Session, *, user_id: uuid.UUID, wallet_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Wallet]:
+    """Kunci wallet dengan SELECT FOR UPDATE dalam urutan ID yang tetap.
+
+    Urutan yang sama di semua jalur mencegah deadlock ketika dua transfer
+    bolak-balik antara wallet yang sama berjalan bersamaan (bagian 9.4).
+    """
+    ids = sorted(set(wallet_ids))
+    rows = (
+        db.execute(
+            select(Wallet)
+            .where(Wallet.id.in_(ids), Wallet.user_id == user_id)
+            .order_by(Wallet.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        .scalars()
+        .all()
+    )
+    if len(rows) != len(ids):
+        raise WalletNotFoundError()
+    return {wallet.id: wallet for wallet in rows}
+
 
 def _journal_accounts(
-    db: Session, *, user_id: uuid.UUID, wallet_id: uuid.UUID
+    db: Session, *, user_id: uuid.UUID, transaction: Transaction
 ) -> JournalAccounts:
-    wallet_account_id = db.execute(
-        select(LedgerAccount.id).where(
-            LedgerAccount.wallet_id == wallet_id,
-            LedgerAccount.user_id == user_id,
+    wallet_ids = [
+        wallet_id
+        for wallet_id in (
+            transaction.wallet_id,
+            transaction.from_wallet_id,
+            transaction.to_wallet_id,
         )
-    ).scalar_one()
+        if wallet_id is not None
+    ]
+    rows = db.execute(
+        select(LedgerAccount.wallet_id, LedgerAccount.id).where(
+            LedgerAccount.user_id == user_id,
+            LedgerAccount.wallet_id.in_(wallet_ids),
+        )
+    ).all()
+    by_wallet = {wallet_id: account_id for wallet_id, account_id in rows}
     system = ensure_system_accounts(db, user_id)
     return JournalAccounts(
-        wallet_account_id=wallet_account_id,
         income_control_id=system["INCOME_CONTROL"].id,
         expense_control_id=system["EXPENSE_CONTROL"].id,
         opening_equity_id=system["OPENING_BALANCE_EQUITY"].id,
+        wallet_account_id=by_wallet.get(transaction.wallet_id),
+        from_account_id=by_wallet.get(transaction.from_wallet_id),
+        to_account_id=by_wallet.get(transaction.to_wallet_id),
     )
 
 
@@ -244,28 +312,33 @@ def post_transaction(
     if kind not in POSTABLE_TYPES:
         raise UnsupportedTransactionTypeError()
 
-    # Kunci wallet SEBELUM memeriksa saldo; baca ulang statusnya setelah
-    # lock didapat supaya tidak memakai data usang.
-    wallet = db.execute(
-        select(Wallet)
-        .where(Wallet.id == transaction.wallet_id, Wallet.user_id == user_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    ).scalar_one()
-    if not wallet.is_active:
+    if kind == TransactionType.TRANSFER:
+        primary_wallet_id = transaction.from_wallet_id
+        wallet_ids = [transaction.from_wallet_id, transaction.to_wallet_id]
+    else:
+        primary_wallet_id = transaction.wallet_id
+        wallet_ids = [transaction.wallet_id]
+
+    # Kunci SEMUA wallet yang terdampak, dalam urutan ID yang tetap, sebelum
+    # memeriksa saldo. Status aktif dibaca ulang setelah lock didapat.
+    wallets = _lock_wallets(db, user_id=user_id, wallet_ids=wallet_ids)
+    if any(not wallet.is_active for wallet in wallets.values()):
         raise WalletNotActiveError()
 
     amount = int(transaction.amount)
-    if kind == TransactionType.EXPENSE:
-        balance = wallet_balance(db, user_id=user_id, wallet_id=wallet.id)
+    if kind in (TransactionType.EXPENSE, TransactionType.TRANSFER):
+        # Untuk transfer yang diperiksa hanya saldo asal (FIN-007)
+        balance = wallet_balance(
+            db, user_id=user_id, wallet_id=primary_wallet_id
+        )
         if balance < amount:
             raise InsufficientBalanceError()
     if kind == TransactionType.OPENING_BALANCE and _wallet_has_entries(
-        db, user_id=user_id, wallet_id=wallet.id
+        db, user_id=user_id, wallet_id=primary_wallet_id
     ):
         raise OpeningBalanceNotAllowedError()
 
-    accounts = _journal_accounts(db, user_id=user_id, wallet_id=wallet.id)
+    accounts = _journal_accounts(db, user_id=user_id, transaction=transaction)
     lines = build_journal(transaction.transaction_type, amount, accounts)
 
     transaction.status = TransactionStatus.POSTED.value

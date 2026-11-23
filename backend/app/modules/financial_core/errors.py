@@ -49,3 +49,17 @@ class InvalidDateRangeError(AppError):
     status_code = 422
     code = "invalid_date_range"
     message = "Rentang waktu tidak valid."
+
+class SameWalletTransferError(AppError):
+    status_code = 422
+    code = "transfer_same_wallet"
+    message = "Wallet asal dan tujuan transfer tidak boleh sama."
+
+
+class InvalidTransactionShapeError(AppError):
+    status_code = 422
+    code = "invalid_wallet_fields"
+    message = (
+        "Kombinasi wallet_id, from_wallet_id, dan to_wallet_id tidak sesuai "
+        "dengan tipe transaksi."
+    )

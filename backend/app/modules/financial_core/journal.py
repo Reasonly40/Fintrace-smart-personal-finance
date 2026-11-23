@@ -19,17 +19,31 @@ class JournalLine:
 class JournalAccounts:
     """Akun-akun yang dibutuhkan untuk menyusun jurnal."""
 
-    wallet_account_id: uuid.UUID
     income_control_id: uuid.UUID
     expense_control_id: uuid.UUID
     opening_equity_id: uuid.UUID
+    # Income, expense, dan opening balance memakai satu akun wallet
+    wallet_account_id: uuid.UUID | None = None
+    # Transfer memakai akun wallet asal dan tujuan
+    from_account_id: uuid.UUID | None = None
+    to_account_id: uuid.UUID | None = None
 
 
 def assert_balanced(lines: list[JournalLine], amount: int) -> None:
-    debit = sum(line.amount for line in lines if line.entry_type == EntryType.DEBIT)
-    credit = sum(line.amount for line in lines if line.entry_type == EntryType.CREDIT)
+    debit = sum(
+        line.amount for line in lines if line.entry_type == EntryType.DEBIT
+    )
+    credit = sum(
+        line.amount for line in lines if line.entry_type == EntryType.CREDIT
+    )
     if debit != credit or debit != amount:
         raise JournalError("Jurnal tidak seimbang.")
+
+
+def _need(account_id: uuid.UUID | None) -> uuid.UUID:
+    if account_id is None:
+        raise JournalError("Akun wallet untuk jurnal ini tidak tersedia.")
+    return account_id
 
 
 def build_journal(
@@ -41,13 +55,24 @@ def build_journal(
 
     kind = TransactionType(transaction_type)
     if kind == TransactionType.INCOME:
-        debit, credit = accounts.wallet_account_id, accounts.income_control_id
+        debit = _need(accounts.wallet_account_id)
+        credit = accounts.income_control_id
     elif kind == TransactionType.EXPENSE:
-        debit, credit = accounts.expense_control_id, accounts.wallet_account_id
+        debit = accounts.expense_control_id
+        credit = _need(accounts.wallet_account_id)
     elif kind == TransactionType.OPENING_BALANCE:
-        debit, credit = accounts.wallet_account_id, accounts.opening_equity_id
+        debit = _need(accounts.wallet_account_id)
+        credit = accounts.opening_equity_id
+    elif kind == TransactionType.TRANSFER:
+        source = _need(accounts.from_account_id)
+        destination = _need(accounts.to_account_id)
+        if source == destination:
+            raise JournalError("Transfer tidak boleh memakai akun yang sama.")
+        # Saldo berpindah: debit tujuan, kredit asal
+        debit = destination
+        credit = source
     else:
-        # TRANSFER (2.6) dan REVERSAL (2.7) menyusul
+        # REVERSAL menyusul di 2.7
         raise UnsupportedTransactionTypeError()
 
     lines = [

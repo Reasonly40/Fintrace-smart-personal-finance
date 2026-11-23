@@ -24,7 +24,6 @@ from app.modules.wallet.errors import WalletNotFoundError
 from tests.ledger_helpers import (
     asset_account,
     control_account,
-    make_transaction,
     make_user,
     make_wallet,
     validate_deferred,
@@ -135,9 +134,7 @@ def test_create_draft_rejects_an_archived_wallet(db_session):
         )
 
 
-@pytest.mark.parametrize(
-    "kind", [TransactionType.TRANSFER, TransactionType.REVERSAL]
-)
+@pytest.mark.parametrize("kind", [TransactionType.REVERSAL])
 def test_create_draft_rejects_types_not_yet_supported(db_session, kind):
     user, wallet = world(db_session)
 
@@ -295,22 +292,6 @@ def test_posting_to_a_wallet_archived_after_the_draft(db_session):
 
     db_session.refresh(tx)
     assert tx.status == "DRAFT"
-
-
-def test_posting_a_transfer_draft_is_not_supported_yet(db_session):
-    user, first = world(db_session)
-    second = make_wallet(db_session, user, "Dua")
-    tx = make_transaction(
-        db_session,
-        user.id,
-        transaction_type="TRANSFER",
-        from_wallet_id=first.id,
-        to_wallet_id=second.id,
-    )
-    db_session.commit()
-
-    with pytest.raises(UnsupportedTransactionTypeError):
-        post(db_session, user, tx)
 
 
 # ---------- post_with_idempotency ----------

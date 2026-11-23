@@ -121,7 +121,7 @@ def test_create_rejects_a_missing_field(me):
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize("kind", ["TRANSFER", "REVERSAL"])
+@pytest.mark.parametrize("kind", ["REVERSAL"])
 def test_create_rejects_types_not_yet_supported(me, kind):
     wallet = new_wallet(me)
 
