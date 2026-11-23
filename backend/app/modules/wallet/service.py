@@ -6,10 +6,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.modules.financial_core import service as ledger_service
+from app.modules.financial_core.balance import wallet_balance
 from app.modules.wallet.enums import WalletType
 from app.modules.wallet.errors import (
     WalletAlreadyArchivedError,
     WalletArchivedError,
+    WalletHasBalanceError,
     WalletNotFoundError,
 )
 from app.modules.wallet.models import Wallet
@@ -148,6 +150,10 @@ def archive_wallet(
     )
     if not wallet.is_active:
         raise WalletAlreadyArchivedError()
+    # Baris wallet sudah terkunci, sehingga posting yang bersamaan menunggu
+    # dan saldo yang dibaca di sini tidak bisa berubah di bawah kaki kita.
+    if wallet_balance(db, user_id=user_id, wallet_id=wallet.id) != 0:
+        raise WalletHasBalanceError()
     try:
         wallet.is_active = False
         wallet.archived_at = datetime.now(UTC)

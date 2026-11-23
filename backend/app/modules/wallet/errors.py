@@ -14,3 +14,10 @@ class WalletArchivedError(ConflictError):
 class WalletAlreadyArchivedError(ConflictError):
     code = "wallet_already_archived"
     message = "Wallet sudah diarsipkan."
+
+class WalletHasBalanceError(ConflictError):
+    code = "wallet_has_balance"
+    message = (
+        "Wallet yang masih memiliki saldo tidak bisa diarsipkan. "
+        "Pindahkan atau gunakan saldonya terlebih dahulu."
+    )

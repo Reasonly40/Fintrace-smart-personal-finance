@@ -64,3 +64,4 @@ class WalletResponse(BaseModel):
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    balance: int
