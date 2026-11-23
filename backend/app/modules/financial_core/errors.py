@@ -44,3 +44,8 @@ class JournalError(AppError):
     status_code = 500
     code = "journal_error"
     message = "Jurnal tidak valid."
+
+class InvalidDateRangeError(AppError):
+    status_code = 422
+    code = "invalid_date_range"
+    message = "Rentang waktu tidak valid."

@@ -2,8 +2,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Literal
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,7 @@ from app.modules.financial_core.enums import (
 from app.modules.financial_core.errors import (
     InsufficientBalanceError,
     InvalidAmountError,
+    InvalidDateRangeError,
     OpeningBalanceNotAllowedError,
     TransactionNotDraftError,
     TransactionNotFoundError,
@@ -324,3 +326,194 @@ def post_with_idempotency(
         db.rollback()
         raise
     return PostResult(transaction_id=transaction.id, replayed=False)
+
+# ---------- baca, daftar, dan pembuatan idempoten ----------
+
+TxSortField = Literal["occurred_at", "amount", "created_at"]
+TxSortOrder = Literal["asc", "desc"]
+
+# Allowlist kolom pengurutan: nilai dari klien tidak pernah masuk ke SQL
+TX_SORT_COLUMNS = {
+    "occurred_at": Transaction.occurred_at,
+    "amount": Transaction.amount,
+    "created_at": Transaction.created_at,
+}
+
+
+@dataclass(frozen=True)
+class CreateResult:
+    transaction_id: uuid.UUID
+    replayed: bool
+
+
+def get_transaction(
+    db: Session, *, user_id: uuid.UUID, transaction_id: uuid.UUID
+) -> Transaction:
+    """Transaksi milik user. Kepemilikan dicek di dalam query itu sendiri,
+    jadi transaksi orang lain sama saja dengan transaksi yang tidak ada."""
+    transaction = db.execute(
+        select(Transaction).where(
+            Transaction.id == transaction_id, Transaction.user_id == user_id
+        )
+    ).scalar_one_or_none()
+    if transaction is None:
+        raise TransactionNotFoundError()
+    return transaction
+
+
+def get_transaction_entries(
+    db: Session, *, user_id: uuid.UUID, transaction_id: uuid.UUID
+) -> list[tuple[LedgerEntry, LedgerAccount]]:
+    rows = db.execute(
+        select(LedgerEntry, LedgerAccount)
+        .join(LedgerAccount, LedgerAccount.id == LedgerEntry.account_id)
+        .where(
+            LedgerEntry.transaction_id == transaction_id,
+            LedgerEntry.user_id == user_id,
+        )
+        # DEBIT lebih dulu, lalu CREDIT
+        .order_by(LedgerEntry.entry_type.desc(), LedgerEntry.id)
+    ).all()
+    return [(entry, account) for entry, account in rows]
+
+
+def _check_range(
+    occurred_from: datetime | None, occurred_to: datetime | None
+) -> None:
+    for value in (occurred_from, occurred_to):
+        if value is not None and value.tzinfo is None:
+            raise InvalidDateRangeError(
+                "Waktu harus menyertakan zona waktu, misalnya akhiran Z."
+            )
+    if (
+        occurred_from is not None
+        and occurred_to is not None
+        and occurred_from >= occurred_to
+    ):
+        raise InvalidDateRangeError()
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def list_transactions(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    wallet_id: uuid.UUID | None = None,
+    transaction_type: TransactionType | None = None,
+    status: TransactionStatus | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
+    search: str | None = None,
+    sort: TxSortField = "occurred_at",
+    order: TxSortOrder = "desc",
+    page: int = 1,
+    limit: int = 20,
+) -> tuple[list[Transaction], int]:
+    _check_range(occurred_from, occurred_to)
+
+    conditions = [Transaction.user_id == user_id]
+    if wallet_id is not None:
+        conditions.append(
+            or_(
+                Transaction.wallet_id == wallet_id,
+                Transaction.from_wallet_id == wallet_id,
+                Transaction.to_wallet_id == wallet_id,
+            )
+        )
+    if transaction_type is not None:
+        conditions.append(Transaction.transaction_type == transaction_type.value)
+    if status is not None:
+        conditions.append(Transaction.status == status.value)
+    if occurred_from is not None:
+        conditions.append(Transaction.occurred_at >= occurred_from)
+    if occurred_to is not None:
+        conditions.append(Transaction.occurred_at < occurred_to)
+    search = search.strip() if search else None
+    if search:
+        conditions.append(
+            Transaction.description.ilike(
+                f"%{_escape_like(search)}%", escape="\\"
+            )
+        )
+
+    total = db.execute(
+        select(func.count()).select_from(Transaction).where(*conditions)
+    ).scalar_one()
+
+    column = TX_SORT_COLUMNS[sort]
+    ordering = column.asc() if order == "asc" else column.desc()
+    rows = (
+        db.execute(
+            select(Transaction)
+            .where(*conditions)
+            # id sebagai penentu akhir agar halaman stabil
+            .order_by(ordering, Transaction.id)
+            .limit(limit)
+            .offset((page - 1) * limit)
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows), total
+
+
+def create_draft_with_idempotency(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    idempotency_key: str | None,
+    transaction_type: TransactionType,
+    amount: int,
+    wallet_id: uuid.UUID,
+    occurred_at: datetime,
+    description: str | None,
+) -> CreateResult:
+    """Buat draft; bila ada key, aman diulang. Commit dilakukan di sini."""
+    try:
+        record = None
+        if idempotency_key is not None:
+            fingerprint = idempotency.request_fingerprint(
+                "transactions.create",
+                {
+                    "transaction_type": transaction_type.value,
+                    "amount": amount,
+                    "wallet_id": str(wallet_id),
+                    "occurred_at": occurred_at.isoformat(),
+                    "description": description,
+                },
+            )
+            outcome = idempotency.begin(
+                db,
+                user_id=user_id,
+                key=idempotency_key,
+                request_hash=fingerprint,
+            )
+            if outcome.replayed:
+                stored = outcome.response or {}
+                return CreateResult(
+                    transaction_id=uuid.UUID(stored["transaction_id"]),
+                    replayed=True,
+                )
+            record = outcome.record
+
+        transaction = create_draft(
+            db,
+            user_id=user_id,
+            transaction_type=transaction_type,
+            amount=amount,
+            wallet_id=wallet_id,
+            occurred_at=occurred_at,
+            description=description,
+        )
+        if record is not None:
+            idempotency.complete(
+                db, record, {"transaction_id": str(transaction.id)}
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return CreateResult(transaction_id=transaction.id, replayed=False)
