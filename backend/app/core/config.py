@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     csrf_cookie_name: str = "fintrace_csrf"
     session_ttl_days: int = 7
 
+    idempotency_ttl_hours: int = 24
+
     login_window_minutes: int = 15
     login_max_failures_per_account_ip: int = 5
     login_max_failures_per_ip: int = 20
