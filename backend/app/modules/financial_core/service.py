@@ -540,9 +540,11 @@ def create_draft_with_idempotency(
     idempotency_key: str | None,
     transaction_type: TransactionType,
     amount: int,
-    wallet_id: uuid.UUID,
     occurred_at: datetime,
-    description: str | None,
+    wallet_id: uuid.UUID | None = None,
+    from_wallet_id: uuid.UUID | None = None,
+    to_wallet_id: uuid.UUID | None = None,
+    description: str | None = None,
 ) -> CreateResult:
     """Buat draft; bila ada key, aman diulang. Commit dilakukan di sini."""
     try:
@@ -553,7 +555,13 @@ def create_draft_with_idempotency(
                 {
                     "transaction_type": transaction_type.value,
                     "amount": amount,
-                    "wallet_id": str(wallet_id),
+                    "wallet_id": str(wallet_id) if wallet_id else None,
+                    "from_wallet_id": (
+                        str(from_wallet_id) if from_wallet_id else None
+                    ),
+                    "to_wallet_id": (
+                        str(to_wallet_id) if to_wallet_id else None
+                    ),
                     "occurred_at": occurred_at.isoformat(),
                     "description": description,
                 },
@@ -577,8 +585,10 @@ def create_draft_with_idempotency(
             user_id=user_id,
             transaction_type=transaction_type,
             amount=amount,
-            wallet_id=wallet_id,
             occurred_at=occurred_at,
+            wallet_id=wallet_id,
+            from_wallet_id=from_wallet_id,
+            to_wallet_id=to_wallet_id,
             description=description,
         )
         if record is not None:

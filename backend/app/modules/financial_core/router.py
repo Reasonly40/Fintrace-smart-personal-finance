@@ -73,8 +73,10 @@ def create_transaction(
         idempotency_key=idempotency_key,
         transaction_type=payload.transaction_type,
         amount=payload.amount,
-        wallet_id=payload.wallet_id,
         occurred_at=payload.occurred_at,
+        wallet_id=payload.wallet_id,
+        from_wallet_id=payload.from_wallet_id,
+        to_wallet_id=payload.to_wallet_id,
         description=payload.description,
     )
     if result.replayed:

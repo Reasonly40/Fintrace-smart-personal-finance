@@ -69,3 +69,30 @@ def spend(c, wallet_id, amount) -> dict:
 
 def balance_of(c, wallet_id) -> int:
     return c.get(f"{WALLETS}/{wallet_id}").json()["balance"]
+
+def transfer_body(
+    source_id, destination_id, amount=40_000, occurred_at=OCCURRED, **extra
+) -> dict:
+    body = {
+        "transaction_type": "TRANSFER",
+        "from_wallet_id": source_id,
+        "to_wallet_id": destination_id,
+        "amount": amount,
+        "occurred_at": occurred_at,
+    }
+    body.update(extra)
+    return body
+
+
+def new_transfer(
+    c, source_id, destination_id, amount=40_000, occurred_at=OCCURRED, **extra
+) -> dict:
+    response = c.post(
+        TRANSACTIONS,
+        json=transfer_body(
+            source_id, destination_id, amount, occurred_at, **extra
+        ),
+        headers=csrf_headers(c),
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
