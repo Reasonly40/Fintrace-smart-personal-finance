@@ -744,7 +744,6 @@ def reverse_transaction(
     )
     _ensure_no_overdraft(db, user_id=user_id, lines=lines)
 
-    now = datetime.now(UTC)
     reversal = Transaction(
         user_id=user_id,
         transaction_type=TransactionType.REVERSAL.value,
@@ -752,8 +751,10 @@ def reverse_transaction(
         currency=original.currency,
         description=reason,
         status=TransactionStatus.POSTED.value,
-        occurred_at=now,
-        posted_at=now,
+        # Periode laporan sama dengan transaksi asli; waktu koreksi yang
+        # sebenarnya tercatat di posted_at
+        occurred_at=original.occurred_at,
+        posted_at=datetime.now(UTC),
         reversal_of_id=original.id,
     )
     db.add(reversal)

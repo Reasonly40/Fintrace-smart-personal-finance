@@ -332,3 +332,16 @@ def test_reversal_can_be_traced_from_the_original(db_session):
         db_session, user_id=user.id, transaction_id=income.id
     )
     assert found == reversal.id
+
+
+def test_reversal_keeps_the_period_of_the_original(db_session):
+    user, wallet, _ = world(db_session)
+    income = post_new(db_session, user, INCOME, 100_000, wallet=wallet)
+    original_time = income.occurred_at
+    original_posted_at = income.posted_at
+
+    reversal = reverse(db_session, user, income)
+
+    assert reversal.occurred_at == original_time
+    assert reversal.posted_at is not None
+    assert reversal.posted_at >= original_posted_at

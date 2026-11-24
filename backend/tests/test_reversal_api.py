@@ -265,3 +265,34 @@ def test_opening_balance_can_be_reversed_and_replaced(me):
     replacement = new_draft(me, wallet["id"], "OPENING_BALANCE", 500_000)
     post_ok(me, replacement["id"])
     assert balance_of(me, wallet["id"]) == 500_000
+
+
+def test_reversal_belongs_to_the_period_of_the_original(me):
+    wallet = new_wallet(me)
+    draft = new_draft(
+        me,
+        wallet["id"],
+        "INCOME",
+        100_000,
+        occurred_at="2026-10-15T08:00:00Z",
+    )
+    post_ok(me, draft["id"])
+
+    reversal = reverse_ok(me, draft["id"])["reversal"]
+
+    assert reversal["occurred_at"] == draft["occurred_at"]
+    october = me.get(
+        TRANSACTIONS,
+        params={
+            "occurred_from": "2026-10-01T00:00:00Z",
+            "occurred_to": "2026-11-01T00:00:00Z",
+        },
+    ).json()
+    assert {item["transaction_type"] for item in october["items"]} == {
+        "INCOME",
+        "REVERSAL",
+    }
+    november = me.get(
+        TRANSACTIONS, params={"occurred_from": "2026-11-01T00:00:00Z"}
+    ).json()
+    assert november["total"] == 0
