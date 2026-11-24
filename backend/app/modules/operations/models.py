@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     String,
     UniqueConstraint,
+    Uuid,
     func,
     text,
 )
@@ -61,4 +62,40 @@ class IdempotencyRecord(UUIDPrimaryKeyMixin, Base):
             name="response_matches_status",
         ),
         Index("ix_idempotency_records_expires_at", "expires_at"),
+    )
+
+class AuditLog(UUIDPrimaryKeyMixin, Base):
+    """Jejak aktivitas penting. Hanya bisa ditambah, tidak bisa diubah."""
+
+    __tablename__ = "audit_logs"
+
+    # NULL untuk kejadian tanpa pengguna terkenal (misalnya login gagal
+    # dengan email yang tidak terdaftar)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # Atribut bernama event_metadata karena `metadata` dipakai SQLAlchemy;
+    # nama kolom di database tetap `metadata` sesuai dokumen
+    event_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(action)) > 0", name="action_not_blank"),
+        CheckConstraint(
+            "jsonb_typeof(metadata) = 'object'", name="metadata_is_object"
+        ),
+        Index("ix_audit_logs_user_id_created_at", "user_id", "created_at"),
+        Index("ix_audit_logs_resource", "resource_type", "resource_id"),
     )

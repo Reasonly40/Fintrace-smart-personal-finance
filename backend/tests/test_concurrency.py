@@ -47,7 +47,7 @@ def sessions(test_engine):
     def wipe():
         with test_engine.begin() as connection:
             connection.execute(
-                text("TRUNCATE TABLE users, login_attempts CASCADE")
+                text("TRUNCATE TABLE users, login_attempts, audit_logs CASCADE")
             )
 
     wipe()
