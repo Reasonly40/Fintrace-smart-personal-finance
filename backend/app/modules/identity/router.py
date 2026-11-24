@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request, Response, status
 from app.core.config import settings
 from app.core.csrf import make_csrf_token
 from app.core.deps import DbSession
+from app.core.http import client_ip
 from app.modules.identity import service
 from app.modules.identity.dependencies import CurrentUser
 from app.modules.identity.models import User
@@ -64,18 +65,17 @@ def clear_auth_cookies(response: Response) -> None:
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def register(payload: RegisterRequest, db: DbSession) -> User:
+def register(
+    payload: RegisterRequest, request: Request, db: DbSession
+) -> User:
     return service.register_user(
         db,
         email=payload.email,
         password=payload.password,
         full_name=payload.full_name,
-        timezone=payload.timezone
+        timezone=payload.timezone,
+        ip_address=client_ip(request),
     )
-
-
-def client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
 
 
 @router.post("/login", response_model=UserResponse)
@@ -96,7 +96,7 @@ def login(
     if old_token:
         service.revoke_session(db, old_token)
 
-    token = service.create_session(db, user)
+    token = service.create_session(db, user, ip_address=client_ip(request))
     set_auth_cookies(response, token)
     return user
 
@@ -105,7 +105,7 @@ def login(
 def logout(request: Request, db: DbSession) -> Response:
     token = request.cookies.get(settings.session_cookie_name)
     if token:
-        service.revoke_session(db, token)
+        service.logout_session(db, token, ip_address=client_ip(request))
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_auth_cookies(response)
     return response
@@ -127,13 +127,26 @@ def list_sessions(
     "/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT
 )
 def delete_session(
-    session_id: uuid.UUID, db: DbSession, user: CurrentUser
+    session_id: uuid.UUID,
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
 ) -> Response:
-    service.revoke_user_session(db, user, session_id)
+    service.revoke_user_session(
+        db, user, session_id, ip_address=client_ip(request)
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.patch("/me", response_model=UserResponse)
 def update_me(
-    payload: UpdateProfileRequest, db: DbSession, user: CurrentUser
+    payload: UpdateProfileRequest,
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
 ) -> User:
-    return service.update_timezone(db, user=user, timezone=payload.timezone)
+    return service.update_timezone(
+        db,
+        user=user,
+        timezone=payload.timezone,
+        ip_address=client_ip(request),
+    )

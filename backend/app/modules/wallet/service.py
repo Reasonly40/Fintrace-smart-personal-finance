@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.financial_core import service as ledger_service
 from app.modules.financial_core.balance import wallet_balance
+from app.modules.operations import audit
 from app.modules.wallet.enums import WalletType
 from app.modules.wallet.errors import (
     WalletAlreadyArchivedError,
@@ -25,12 +26,16 @@ SORT_COLUMNS = {"created_at": Wallet.created_at, "name": Wallet.name}
 
 
 def create_wallet(
-    db: Session, *, user_id: uuid.UUID, name: str, wallet_type: WalletType
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    name: str,
+    wallet_type: WalletType,
+    ip_address: str | None = None,
 ) -> Wallet:
     """Buat wallet beserta akun ASSET-nya dalam satu transaksi database.
 
-    Gagal di mana pun berarti tidak ada yang tersimpan (FIN-004, FIN-012).
-    """
+    Gagal di mana pun berarti tidak ada yang tersimpan (FIN-004, FIN-012)."""
     wallet = Wallet(
         user_id=user_id, name=name.strip(), wallet_type=wallet_type.value
     )
@@ -45,6 +50,15 @@ def create_wallet(
             currency=wallet.currency,
         )
         ledger_service.ensure_system_accounts(db, user_id)
+        audit.record(
+            db,
+            user_id=user_id,
+            action=audit.AuditAction.WALLET_CREATED,
+            resource_type="wallet",
+            resource_id=wallet.id,
+            metadata={"wallet_type": wallet_type.value},
+            ip_address=ip_address,
+        )
         db.commit()
     except Exception:
         db.rollback()
@@ -120,20 +134,34 @@ def update_wallet(
     wallet_id: uuid.UUID,
     name: str | None,
     wallet_type: WalletType | None,
+    ip_address: str | None = None,
 ) -> Wallet:
     wallet = get_wallet(
         db, user_id=user_id, wallet_id=wallet_id, for_update=True
     )
     if not wallet.is_active:
         raise WalletArchivedError()
+    changed: list[str] = []
     try:
         if name is not None:
             wallet.name = name
             ledger_service.rename_wallet_account(
                 db, user_id=user_id, wallet_id=wallet.id, name=name
             )
+            changed.append("name")
         if wallet_type is not None:
             wallet.wallet_type = wallet_type.value
+            changed.append("wallet_type")
+        if changed:
+            audit.record(
+                db,
+                user_id=user_id,
+                action=audit.AuditAction.WALLET_UPDATED,
+                resource_type="wallet",
+                resource_id=wallet.id,
+                metadata={"fields": changed},
+                ip_address=ip_address,
+            )
         db.commit()
     except Exception:
         db.rollback()
@@ -143,7 +171,11 @@ def update_wallet(
 
 
 def archive_wallet(
-    db: Session, *, user_id: uuid.UUID, wallet_id: uuid.UUID
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    wallet_id: uuid.UUID,
+    ip_address: str | None = None,
 ) -> Wallet:
     wallet = get_wallet(
         db, user_id=user_id, wallet_id=wallet_id, for_update=True
@@ -157,6 +189,14 @@ def archive_wallet(
     try:
         wallet.is_active = False
         wallet.archived_at = datetime.now(UTC)
+        audit.record(
+            db,
+            user_id=user_id,
+            action=audit.AuditAction.WALLET_ARCHIVED,
+            resource_type="wallet",
+            resource_id=wallet.id,
+            ip_address=ip_address,
+        )
         db.commit()
     except Exception:
         db.rollback()

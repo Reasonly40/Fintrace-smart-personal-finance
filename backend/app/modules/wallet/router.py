@@ -1,10 +1,11 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import DbSession
+from app.core.http import client_ip
 from app.core.pagination import Page
 from app.modules.financial_core.balance import wallet_balance, wallet_balances
 from app.modules.identity.dependencies import CurrentUser
@@ -43,17 +44,23 @@ def respond(db: Session, wallet: Wallet) -> WalletResponse:
 @router.post(
     "", response_model=WalletResponse, status_code=status.HTTP_201_CREATED
 )
+@router.post(
+    "", response_model=WalletResponse, status_code=status.HTTP_201_CREATED
+)
 def create_wallet(
-    payload: WalletCreate, db: DbSession, user: CurrentUser
+    payload: WalletCreate,
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
 ) -> WalletResponse:
     wallet = service.create_wallet(
         db,
         user_id=user.id,
         name=payload.name,
         wallet_type=payload.wallet_type,
+        ip_address=client_ip(request),
     )
     return respond(db, wallet)
-
 
 @router.get("", response_model=Page[WalletResponse])
 def list_wallets(
@@ -99,6 +106,7 @@ def get_wallet(
 def update_wallet(
     wallet_id: uuid.UUID,
     payload: WalletUpdate,
+    request: Request,
     db: DbSession,
     user: CurrentUser,
 ) -> WalletResponse:
@@ -108,15 +116,22 @@ def update_wallet(
         wallet_id=wallet_id,
         name=payload.name,
         wallet_type=payload.wallet_type,
+        ip_address=client_ip(request),
     )
     return respond(db, wallet)
 
 
 @router.post("/{wallet_id}/archive", response_model=WalletResponse)
 def archive_wallet(
-    wallet_id: uuid.UUID, db: DbSession, user: CurrentUser
+    wallet_id: uuid.UUID,
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
 ) -> WalletResponse:
     wallet = service.archive_wallet(
-        db, user_id=user.id, wallet_id=wallet_id
+        db,
+        user_id=user.id,
+        wallet_id=wallet_id,
+        ip_address=client_ip(request),
     )
     return respond(db, wallet)

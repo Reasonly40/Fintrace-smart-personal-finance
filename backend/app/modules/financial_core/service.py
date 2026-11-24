@@ -42,6 +42,7 @@ from app.modules.financial_core.models import (
     LedgerEntry,
     Transaction,
 )
+from app.modules.operations import audit
 from app.modules.operations import service as idempotency
 from app.modules.wallet.errors import WalletNotFoundError
 from app.modules.wallet.models import Wallet
@@ -389,9 +390,10 @@ def post_with_idempotency(
     user_id: uuid.UUID,
     transaction_id: uuid.UUID,
     idempotency_key: str,
+    ip_address: str | None = None,
 ) -> PostResult:
     """Posting yang aman diulang. Commit dilakukan di sini, sekali, untuk
-    posting dan record idempotency sekaligus (FIN-012)."""
+    posting, audit, dan record idempotency sekaligus (FIN-012)."""
     fingerprint = idempotency.request_fingerprint(
         "transactions.post", {"transaction_id": str(transaction_id)}
     )
@@ -418,6 +420,15 @@ def post_with_idempotency(
                 "transaction_id": str(transaction.id),
                 "status": transaction.status,
             },
+        )
+        audit.record(
+            db,
+            user_id=user_id,
+            action=audit.AuditAction.TRANSACTION_POSTED,
+            resource_type="transaction",
+            resource_id=transaction.id,
+            metadata={"transaction_type": transaction.transaction_type},
+            ip_address=ip_address,
         )
         db.commit()
     except Exception:
@@ -783,9 +794,10 @@ def reverse_with_idempotency(
     transaction_id: uuid.UUID,
     reason: str,
     idempotency_key: str,
+    ip_address: str | None = None,
 ) -> ReverseResult:
     """Reversal yang aman diulang. Commit dilakukan di sini, sekali, untuk
-    reversal dan record idempotency sekaligus."""
+    reversal, audit, dan record idempotency sekaligus."""
     fingerprint = idempotency.request_fingerprint(
         "transactions.reverse",
         {"transaction_id": str(transaction_id), "reason": reason},
@@ -817,6 +829,15 @@ def reverse_with_idempotency(
                 "original_id": str(transaction_id),
                 "reversal_id": str(reversal.id),
             },
+        )
+        audit.record(
+            db,
+            user_id=user_id,
+            action=audit.AuditAction.TRANSACTION_REVERSED,
+            resource_type="transaction",
+            resource_id=transaction_id,
+            metadata={"reversal_id": str(reversal.id)},
+            ip_address=ip_address,
         )
         db.commit()
     except Exception:

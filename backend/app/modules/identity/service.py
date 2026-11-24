@@ -13,6 +13,7 @@ from app.core.timezones import DEFAULT_TIMEZONE
 from app.modules.identity import rate_limit
 from app.modules.identity.models import User, UserSession
 from app.modules.identity.security import hash_password, needs_rehash, verify_password
+from app.modules.operations import audit
 
 
 class EmailAlreadyRegisteredError(ConflictError):
@@ -54,6 +55,7 @@ def register_user(
     password: str,
     full_name: str,
     timezone: str = DEFAULT_TIMEZONE,
+    ip_address: str | None = None,
 ) -> User:
     normalized = normalize_email(email)
 
@@ -67,10 +69,19 @@ def register_user(
         email=normalized,
         password_hash=hash_password(password),
         full_name=full_name,
-        timezone=timezone
+        timezone=timezone,
     )
     db.add(user)
     try:
+        db.flush()
+        audit.record(
+            db,
+            user_id=user.id,
+            action=audit.AuditAction.USER_REGISTERED,
+            resource_type="user",
+            resource_id=user.id,
+            ip_address=ip_address,
+        )
         db.commit()
     except IntegrityError as exc:
         # Dua registrasi bersamaan: yang kalah balapan ditolak oleh
@@ -100,16 +111,26 @@ def authenticate(db: Session, *, email: str, password: str) -> User:
     return user
 
 
-def create_session(db: Session, user: User) -> str:
+def create_session(
+    db: Session, user: User, *, ip_address: str | None = None
+) -> str:
     """Buat sesi baru dan kembalikan token mentah (hanya dikirim sekali)."""
     token = secrets.token_urlsafe(32)
-    db.add(
-        UserSession(
-            user_id=user.id,
-            token_hash=hash_token(token),
-            expires_at=datetime.now(UTC)
-            + timedelta(days=settings.session_ttl_days),
-        )
+    session = UserSession(
+        user_id=user.id,
+        token_hash=hash_token(token),
+        expires_at=datetime.now(UTC)
+        + timedelta(days=settings.session_ttl_days),
+    )
+    db.add(session)
+    db.flush()
+    audit.record(
+        db,
+        user_id=user.id,
+        action=audit.AuditAction.LOGIN_SUCCEEDED,
+        resource_type="session",
+        resource_id=session.id,
+        ip_address=ip_address,
     )
     db.commit()
     return token
@@ -169,7 +190,38 @@ def list_active_sessions(
     ]
 
 
-def revoke_user_session(db: Session, user: User, session_id: uuid.UUID) -> None:
+def logout_session(
+    db: Session, token: str, *, ip_address: str | None = None
+) -> None:
+    """Cabut sesi milik token ini dan catat kejadiannya. Token yang sudah
+    dicabut atau tidak dikenal tidak menghasilkan apa-apa."""
+    session = db.execute(
+        select(UserSession).where(
+            UserSession.token_hash == hash_token(token),
+            UserSession.revoked_at.is_(None),
+        )
+    ).scalar_one_or_none()
+    if session is None:
+        return
+    session.revoked_at = datetime.now(UTC)
+    audit.record(
+        db,
+        user_id=session.user_id,
+        action=audit.AuditAction.LOGOUT,
+        resource_type="session",
+        resource_id=session.id,
+        ip_address=ip_address,
+    )
+    db.commit()
+
+
+def revoke_user_session(
+    db: Session,
+    user: User,
+    session_id: uuid.UUID,
+    *,
+    ip_address: str | None = None,
+) -> None:
     """Cabut sesi milik user. Sesi milik orang lain diperlakukan
     persis seperti sesi yang tidak ada."""
     result = db.execute(
@@ -181,9 +233,18 @@ def revoke_user_session(db: Session, user: User, session_id: uuid.UUID) -> None:
         )
         .values(revoked_at=datetime.now(UTC))
     )
-    db.commit()
     if result.rowcount == 0:
+        db.rollback()
         raise SessionNotFoundError()
+    audit.record(
+        db,
+        user_id=user.id,
+        action=audit.AuditAction.SESSION_REVOKED,
+        resource_type="session",
+        resource_id=session_id,
+        ip_address=ip_address,
+    )
+    db.commit()
     
 def login(db: Session, *, email: str, password: str, ip: str) -> User:
     """Login dengan rate limit: cek batas, verifikasi, catat atau reset."""
@@ -192,12 +253,43 @@ def login(db: Session, *, email: str, password: str, ip: str) -> User:
         user = authenticate(db, email=email, password=password)
     except InvalidCredentialsError:
         rate_limit.record_failed_login(db, email=email, ip=ip)
+        known_user_id = db.execute(
+            select(User.id).where(User.email == normalize_email(email))
+        ).scalar_one_or_none()
+        # Hanya sidik jari HMAC; email asli tidak masuk audit. Percobaan
+        # yang diblokir rate limit tidak dicatat, jadi jumlah barisnya
+        # terbatas oleh rate limit itu sendiri.
+        audit.record(
+            db,
+            user_id=known_user_id,
+            action=audit.AuditAction.LOGIN_FAILED,
+            resource_type="user",
+            resource_id=known_user_id,
+            metadata={"email_fingerprint": rate_limit.email_fingerprint(email)},
+            ip_address=ip,
+        )
+        db.commit()
         raise
     rate_limit.clear_failed_logins(db, email=email, ip=ip)
     return user
 
-def update_timezone(db: Session, *, user: User, timezone: str) -> User:
+def update_timezone(
+    db: Session,
+    *,
+    user: User,
+    timezone: str,
+    ip_address: str | None = None,
+) -> User:
     user.timezone = timezone
+    audit.record(
+        db,
+        user_id=user.id,
+        action=audit.AuditAction.TIMEZONE_CHANGED,
+        resource_type="user",
+        resource_id=user.id,
+        metadata={"timezone": timezone},
+        ip_address=ip_address,
+    )
     db.commit()
     db.refresh(user)
     return user

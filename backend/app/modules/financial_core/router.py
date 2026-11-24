@@ -2,10 +2,11 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Query, Response, status
+from fastapi import APIRouter, Header, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import DbSession
+from app.core.http import client_ip
 from app.core.pagination import Page
 from app.modules.financial_core import service
 from app.modules.financial_core.enums import (
@@ -145,6 +146,7 @@ def get_transaction(
 @router.post("/{transaction_id}/post", response_model=TransactionDetailResponse)
 def post_transaction(
     transaction_id: uuid.UUID,
+    request: Request,
     response: Response,
     db: DbSession,
     user: CurrentUser,
@@ -155,6 +157,7 @@ def post_transaction(
         user_id=user.id,
         transaction_id=transaction_id,
         idempotency_key=idempotency_key,
+        ip_address=client_ip(request),
     )
     if result.replayed:
         response.headers["Idempotent-Replay"] = "true"
@@ -167,6 +170,7 @@ def post_transaction(
 def reverse_transaction(
     transaction_id: uuid.UUID,
     payload: ReversalRequest,
+    request: Request,
     response: Response,
     db: DbSession,
     user: CurrentUser,
@@ -178,6 +182,7 @@ def reverse_transaction(
         transaction_id=transaction_id,
         reason=payload.reason,
         idempotency_key=idempotency_key,
+        ip_address=client_ip(request),
     )
     if result.replayed:
         response.headers["Idempotent-Replay"] = "true"
