@@ -12,6 +12,7 @@ from app.modules.identity.schemas import (
     LoginRequest,
     RegisterRequest,
     SessionResponse,
+    UpdateProfileRequest,
     UserResponse,
 )
 
@@ -69,6 +70,7 @@ def register(payload: RegisterRequest, db: DbSession) -> User:
         email=payload.email,
         password=payload.password,
         full_name=payload.full_name,
+        timezone=payload.timezone
     )
 
 
@@ -129,3 +131,9 @@ def delete_session(
 ) -> Response:
     service.revoke_user_session(db, user, session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.patch("/me", response_model=UserResponse)
+def update_me(
+    payload: UpdateProfileRequest, db: DbSession, user: CurrentUser
+) -> User:
+    return service.update_timezone(db, user=user, timezone=payload.timezone)

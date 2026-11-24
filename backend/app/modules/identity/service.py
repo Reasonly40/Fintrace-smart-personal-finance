@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, UnauthorizedError
+from app.core.timezones import DEFAULT_TIMEZONE
 from app.modules.identity import rate_limit
 from app.modules.identity.models import User, UserSession
 from app.modules.identity.security import hash_password, needs_rehash, verify_password
@@ -47,7 +48,12 @@ def hash_token(token: str) -> str:
 
 
 def register_user(
-    db: Session, *, email: str, password: str, full_name: str
+    db: Session,
+    *,
+    email: str,
+    password: str,
+    full_name: str,
+    timezone: str = DEFAULT_TIMEZONE,
 ) -> User:
     normalized = normalize_email(email)
 
@@ -61,6 +67,7 @@ def register_user(
         email=normalized,
         password_hash=hash_password(password),
         full_name=full_name,
+        timezone=timezone
     )
     db.add(user)
     try:
@@ -187,4 +194,10 @@ def login(db: Session, *, email: str, password: str, ip: str) -> User:
         rate_limit.record_failed_login(db, email=email, ip=ip)
         raise
     rate_limit.clear_failed_logins(db, email=email, ip=ip)
+    return user
+
+def update_timezone(db: Session, *, user: User, timezone: str) -> User:
+    user.timezone = timezone
+    db.commit()
+    db.refresh(user)
     return user

@@ -14,6 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.timezones import DEFAULT_TIMEZONE
 from app.db.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 from app.db.session import Base
 
@@ -30,11 +31,17 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-
+    timezone: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default=DEFAULT_TIMEZONE,
+        server_default=text("'Asia/Makassar'"),
+    )
     __table_args__ = (
         UniqueConstraint("email"),
         # Email wajib disimpan huruf kecil; service juga menormalisasinya
         CheckConstraint("email = lower(email)", name="email_lowercase"),
+        CheckConstraint("length(btrim(timezone)) > 0", name="timezone_not_blank"),
     )
 
 

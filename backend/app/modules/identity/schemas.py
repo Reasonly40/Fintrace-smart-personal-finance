@@ -3,6 +3,16 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.core.timezones import DEFAULT_TIMEZONE, is_valid_timezone
+
+
+def _check_timezone(value: str) -> str:
+    if not is_valid_timezone(value):
+        raise ValueError(
+            "Zona waktu tidak dikenal. Gunakan nama IANA, "
+            "misalnya Asia/Makassar."
+        )
+    return value
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -16,6 +26,14 @@ class RegisterRequest(BaseModel):
         if not value:
             raise ValueError("Nama tidak boleh kosong.")
         return value
+    
+    timezone: str = DEFAULT_TIMEZONE
+
+    @field_validator("timezone")
+    @classmethod
+    def check_timezone(cls, value: str) -> str:
+        return _check_timezone(value)
+    
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -29,6 +47,7 @@ class UserResponse(BaseModel):
     id: uuid.UUID
     email: EmailStr
     full_name: str
+    timezone: str
     created_at: datetime
 
 class SessionResponse(BaseModel):
@@ -38,3 +57,13 @@ class SessionResponse(BaseModel):
     created_at: datetime
     expires_at: datetime
     is_current: bool
+
+class UpdateProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timezone: str
+
+    @field_validator("timezone")
+    @classmethod
+    def check_timezone(cls, value: str) -> str:
+        return _check_timezone(value)
