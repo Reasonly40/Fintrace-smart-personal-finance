@@ -137,7 +137,10 @@ def test_complete_reversal_passes_the_commit_check(db_session):
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("amount", Decimal(1)), ("description", "diubah diam-diam")],
+    [
+        ("amount", Decimal(1)),
+        ("occurred_at", datetime(2020, 1, 1, tzinfo=UTC)),
+    ],
 )
 def test_posted_transaction_cannot_be_edited(db_session, field, value):
     user, wallet = new_world(db_session)

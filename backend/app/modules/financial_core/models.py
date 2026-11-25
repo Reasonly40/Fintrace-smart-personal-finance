@@ -118,6 +118,9 @@ class Transaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     reversal_of_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, nullable=True
     )
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("categories.id", ondelete="RESTRICT"), nullable=True
+    )
 
     __table_args__ = (
         # FIN-005: transaksi hanya boleh menunjuk wallet milik user yang sama
@@ -178,6 +181,17 @@ class Transaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "(status = 'DRAFT' AND posted_at IS NULL) "
             "OR (status IN ('POSTED', 'REVERSED') AND posted_at IS NOT NULL)",
             name="posted_at_matches_status",
+        ),
+                # Hanya income dan expense yang memakai kategori (bagian 8.6)
+        CheckConstraint(
+            "category_id IS NULL OR transaction_type IN ('INCOME', 'EXPENSE')",
+            name="category_only_income_expense",
+        ),
+        Index(
+            "ix_transactions_user_id_category_id_occurred_at",
+            "user_id",
+            "category_id",
+            "occurred_at",
         ),
         # Bagian 8.7
         Index("ix_transactions_user_id_occurred_at", "user_id", "occurred_at"),
