@@ -27,6 +27,10 @@ class AuditAction(StrEnum):
     WALLET_ARCHIVED = "wallet.archived"
     TRANSACTION_POSTED = "transaction.posted"
     TRANSACTION_REVERSED = "transaction.reversed"
+    CATEGORY_CREATED = "category.created"
+    CATEGORY_UPDATED = "category.updated"
+    CATEGORY_ARCHIVED = "category.archived"
+    CATEGORY_UNARCHIVED = "category.unarchived"
 
 
 def record(

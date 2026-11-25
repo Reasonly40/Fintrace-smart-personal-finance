@@ -6,6 +6,10 @@ import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import sessionmaker
 
+from app.modules.classification import service as category_service
+from app.modules.classification.enums import CategoryType
+from app.modules.classification.errors import CategoryNameTakenError
+from app.modules.classification.models import Category
 from app.modules.classification.seed import ensure_global_categories
 from app.modules.financial_core import service as ledger_service
 from app.modules.financial_core.balance import wallet_balance
@@ -424,3 +428,27 @@ def test_posting_waits_for_the_wallet_lock(sessions):
 
     assert failures == []
     assert balance(sessions, user_id, wallet_id) == 10_000
+
+
+# ---------- unique index sebagai penjaga terakhir ----------
+
+
+def test_concurrent_category_creation_with_one_name_creates_one(sessions):
+    user_id, _ = setup_world(sessions)
+
+    def create():
+        with sessions() as db:
+            return category_service.create_category(
+                db,
+                user_id=user_id,
+                name="Kopi",
+                category_type=CategoryType.EXPENSE,
+                icon=None,
+                color=None,
+            )
+
+    results = run_parallel([create, create, create])
+
+    assert len(oks(results)) == 1
+    assert_only(results, CategoryNameTakenError)
+    assert count(sessions, Category, Category.user_id == user_id) == 1

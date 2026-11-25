@@ -72,3 +72,6 @@ class Category(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         Index("ix_categories_user_id", "user_id"),
     )
+    @property
+    def is_global(self) -> bool:
+        return self.user_id is None

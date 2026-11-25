@@ -110,3 +110,23 @@ def reverse_ok(c, transaction_id, key=None, reason="Salah input") -> dict:
     response = reverse_tx(c, transaction_id, key, reason)
     assert response.status_code == 200, response.text
     return response.json()
+
+
+CATEGORIES = "/api/v1/categories"
+
+
+def new_category(c, name="Kopi", kind="EXPENSE", **extra) -> dict:
+    response = c.post(
+        CATEGORIES,
+        json={"name": name, "category_type": kind, **extra},
+        headers=csrf_headers(c),
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def global_category(c, name, kind) -> dict:
+    items = c.get(CATEGORIES, params={"q": name, "type": kind}).json()["items"]
+    found = [item for item in items if item["name"] == name]
+    assert len(found) == 1, items
+    return found[0]

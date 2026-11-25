@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.core.csrf import csrf_protect
 from app.core.deps import DbSession
 from app.core.errors import register_error_handlers
+from app.modules.classification.router import router as category_router
 from app.modules.financial_core.router import router as transaction_router
 from app.modules.identity.router import router as auth_router
 from app.modules.operations.router import router as audit_router
@@ -21,6 +22,7 @@ app = FastAPI(
 register_error_handlers(app)
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
+app.include_router(category_router, prefix="/api/v1")
 app.include_router(wallet_router, prefix="/api/v1")
 app.include_router(transaction_router, prefix="/api/v1")
 
