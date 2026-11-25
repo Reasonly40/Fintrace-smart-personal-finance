@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import sessionmaker
 
+from app.modules.classification.seed import ensure_global_categories
 from app.modules.financial_core import service as ledger_service
 from app.modules.financial_core.balance import wallet_balance
 from app.modules.financial_core.enums import TransactionType
@@ -49,6 +50,10 @@ def sessions(test_engine):
             connection.execute(
                 text("TRUNCATE TABLE users, login_attempts, audit_logs CASCADE")
             )
+        # CASCADE juga mengosongkan categories; kembalikan data bawaan
+        with factory() as db:
+            ensure_global_categories(db)
+            db.commit()
 
     wipe()
     try:
